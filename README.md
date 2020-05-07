@@ -14,7 +14,7 @@ The chain of asynchronous operations works as followers:
 
      The _async_resolve()_ will pass a _boost::asio::ip::tcp::resolver::iterator object_ to the callback function. This iterator points to one or more endpoints representing the server we wish to connect to. We pass the iterator to _asio::async_connect()_ and connect to the first successful endpoint.
 
-4.  **on_connection_established**
+4.  **on_connection_established()**
 
      Invoked after connecting to the server. We now construct a HTTP GET request message with the following format: _"GET URI HTTP/1.1\r\nHOST: host.tld\r\n\r\n"_.
 
@@ -52,4 +52,4 @@ The chain of asynchronous operations works as followers:
 
 12.  **on_finish()**
 
-     Invoked at the end of the chain or callbacks on both success and error. The passed error code is checked and we response accordinly. An _asio::error::eof_ error code signifies that the response was read succesfully. Upon succesfully retreiving the full response, we output it with _std::cout_.
+     Invoked at the end of the chain or callbacks on both success and error. The passed error code is checked and we respond accordinly. An _asio::error::eof_ error code signifies that the response was read succesfully. Upon succesfully retreiving the full response, we output it with _std::cout_.

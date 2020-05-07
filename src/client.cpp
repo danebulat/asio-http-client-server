@@ -24,6 +24,7 @@ HTML Client for sending GET requests to a server.
 #include <mutex>
 #include <memory>
 #include <iostream>
+#include <sstream>
 
 using namespace boost;
 
@@ -208,19 +209,11 @@ public:
             asio::ip::tcp::resolver::query::numeric_service);
         
         // Check if request was cancelled
-        std::unique_lock<std::mutex> cancel_lock(m_cancel_mux);
-
-        if (m_was_cancelled) {
-            cancel_lock.unlock();
-            on_finish(boost::system::error_code(asio::error::operation_aborted));
-            return;
-        }
+        if (check_if_request_cancelled()) return;
 
         // Resolve the host name (starts asynchronous callback chain)
         m_resolver.async_resolve(resolver_query, 
-            [this]
-            (const boost::system::error_code& ec, asio::ip::tcp::resolver::iterator iterator)
-            {
+            [this](const boost::system::error_code& ec, asio::ip::tcp::resolver::iterator iterator) {
                 on_host_name_resolved(ec, iterator);
             });
     }
@@ -229,8 +222,8 @@ public:
     void cancel() 
     {
         std::unique_lock<std::mutex> cancel_lock(m_cancel_mux);
-
         m_was_cancelled = true;
+        cancel_lock.unlock();
 
         m_resolver.cancel();
 
@@ -246,24 +239,14 @@ private:
         asio::ip::tcp::resolver::iterator iterator)
     {
         // Handle any error codes
-        if (ec.value() != 0) {
-            on_finish(ec);
-            return;
-        }
+        if (check_if_error_occurred(ec)) return;
 
         // Check if request was cancelled
-        std::unique_lock<std::mutex> cancel_lock(m_cancel_mux);
-
-        if (m_was_cancelled) {
-            cancel_lock.unlock();
-            on_finish(boost::system::error_code(asio::error::operation_aborted));
-            return;
-        }
+        if (check_if_request_cancelled()) return;
 
         // Connect to the first successful endpoint via the iterator
         asio::async_connect(m_sock, iterator, 
-            [this](const boost::system::error_code& ec, asio::ip::tcp::resolver::iterator iterator)
-            {
+            [this](const boost::system::error_code& ec, asio::ip::tcp::resolver::iterator iterator) {
                 on_connection_established(ec, iterator);
             });
     }
@@ -272,10 +255,7 @@ private:
         asio::ip::tcp::resolver::iterator iterator)
     {
         // Handle any errors
-        if (ec.value() != 0) {
-            on_finish(ec);
-            return;
-        }
+        if (check_if_error_occurred(ec)) return;
 
         // Compose the request message
         m_request_buf += "GET " + m_uri + " HTTP/1.1\r\n";
@@ -285,19 +265,11 @@ private:
         m_request_buf += "\r\n";
 
         // Check if request was cancelled
-        std::unique_lock<std::mutex> cancel_lock(m_cancel_mux);
-
-        if (m_was_cancelled) {
-            cancel_lock.unlock();
-            on_finish(boost::system::error_code(asio::error::operation_aborted));
-            return;
-        }
+        if (check_if_request_cancelled()) return;
 
         // Send the request message
         asio::async_write(m_sock, asio::buffer(m_request_buf),
-            [this]
-            (const boost::system::error_code& ec, std::size_t bytes_transferred) 
-            {
+            [this](const boost::system::error_code& ec, std::size_t bytes_transferred) {
                 on_request_sent(ec, bytes_transferred);
             });
     }
@@ -305,28 +277,17 @@ private:
     void on_request_sent(const boost::system::error_code& ec, std::size_t bytes_transferred)
     {
         // Handle any errors
-        if (ec.value() != 0) {
-            on_finish(ec);
-            return;
-        }
+        if (check_if_error_occurred(ec)) return;
 
         // Let server know the full request is sent by shutting down the socket.
         m_sock.shutdown(asio::ip::tcp::socket::shutdown_send);
 
         // Check if request was cancelled
-        std::unique_lock<std::mutex> cancel_lock(m_cancel_mux);
-
-        if (m_was_cancelled) {
-            cancel_lock.unlock();
-            on_finish(boost::system::error_code(asio::error::operation_aborted));
-            return;
-        }
+        if (check_if_request_cancelled()) return;
 
         // Start reading response from server, starting with the status line.
         asio::async_read_until(m_sock, m_response.get_response_buf(), "\r\n",
-            [this]
-            (const boost::system::error_code& ec, std::size_t bytes_transferred)
-            {
+            [this](const boost::system::error_code& ec, std::size_t bytes_transferred) {
                 on_status_line_received(ec, bytes_transferred);
             });
     }
@@ -335,10 +296,7 @@ private:
         std::size_t bytes_transferred)
     {
         // Handle any errors
-        if (ec.value() != 0) {
-            on_finish(ec);
-            return;
-        }
+        if (check_if_error_occurred(ec)) return;
 
         // Parse the status line
         std::string http_version;
@@ -349,8 +307,7 @@ private:
         response_stream >> http_version; // read until space
 
         if (http_version != "HTTP/1.1") {
-            // Response is incorrect
-            on_finish(http_errors::invalid_response);
+            on_finish(http_errors::invalid_response); // response is incorrect
             return;
         }
 
@@ -374,20 +331,12 @@ private:
         m_response.set_status_message(status_message);
 
         // Check if request was cancelled
-        std::unique_lock<std::mutex> cancel_lock(m_cancel_mux);
-
-        if (m_was_cancelled) {
-            cancel_lock.unlock();
-            on_finish(boost::system::error_code(asio::error::operation_aborted));
-            return;
-        }
+        if (check_if_request_cancelled()) return;
 
         // Now read the response headers. According to HTTP protocol, the response
         // headers block ends with "\r\n\r\n" delimiter.
         asio::async_read_until(m_sock, m_response.get_response_buf(), "\r\n\r\n",
-            [this]
-            (const boost::system::error_code& ec, std::size_t bytes_transferred)
-            {
+            [this](const boost::system::error_code& ec, std::size_t bytes_transferred) {
                 on_headers_received(ec, bytes_transferred);
             });
     }
@@ -396,10 +345,7 @@ private:
         std::size_t bytes_transferred)
     {
         // Handle any errors
-        if (ec.value() != 0) {
-            on_finish(ec);
-            return;
-        }
+        if (check_if_error_occurred(ec)) return;
 
         // Parse and store headers
         std::string header, header_name, header_value;
@@ -444,9 +390,7 @@ private:
 
         // Now we want to read the response body
         asio::async_read(m_sock, m_response.get_response_buf(),
-            [this]
-            (const boost::system::error_code& ec, std::size_t bytes_transferred)
-            {
+            [this](const boost::system::error_code& ec, std::size_t bytes_transferred) {
                 on_response_body_received(ec, bytes_transferred);
             });
     }
@@ -473,6 +417,27 @@ private:
         m_callback(*this, m_response, ec);
 
         return;
+    }
+
+    bool check_if_request_cancelled() {
+        std::unique_lock<std::mutex> cancel_lock(m_cancel_mux);
+        
+        if (m_was_cancelled) {
+            cancel_lock.unlock();
+            on_finish(boost::system::error_code(asio::error::operation_aborted));
+            return true;
+        }
+
+        cancel_lock.unlock();
+        return false;
+    }
+
+    bool check_if_error_occurred(const boost::system::error_code& ec) {
+        if (ec.value() != 0) {
+            on_finish(ec);
+            return true;
+        }
+        return false;
     }
 
 private:

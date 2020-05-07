@@ -10,3 +10,6 @@ bin/*
 
 # Ignore VSCode files
 .vscode/*
+
+# Additional files
+TODO.txt
